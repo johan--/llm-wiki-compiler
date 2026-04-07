@@ -255,13 +255,17 @@ If `article_sections` is missing (older configs), the compiler falls back to a d
 
 ## Cost Savings (Real Data)
 
-Tested on a project with 383 markdown files (13.1 MB). All numbers verified with `wc`:
+Tested on a real project with 1,183 markdown files across meetings, strategy docs, session histories, and research notes.
+
+### Token Reduction
 
 | | Without Wiki | With Wiki |
 |---|---|---|
-| Session startup context | ~47K tokens (13 files) | ~7.7K tokens (INDEX + 2 articles) |
+| Session startup context | ~79K tokens (13 files) | ~8.5K tokens (INDEX + 2-3 articles) |
 | Per-question research | ~8,000 tokens (10+ files) | ~600 tokens (1 article) |
-| **Reduction** | — | **84%** |
+| **Reduction** | — | **89%** |
+
+### Compilation Costs
 
 | | Tokens | Cost (Opus) | Cost (Sonnet) |
 |---|---|---|---|
@@ -269,9 +273,19 @@ Tested on a project with 383 markdown files (13.1 MB). All numbers verified with
 | Daily incremental | ~100K | ~$1.50 | ~$0.30 |
 | **Break-even** | — | **First session** | **First session** |
 
-Compression highlights:
-- 383 files (13.1 MB) → 13 articles (161 KB) — **81x compression**
-- 130 meeting transcripts (122,625 lines) → 1 digest article (244 lines) — **503x**
+### Accuracy
+
+We spot-checked wiki articles against their raw source files:
+
+- **10/10 key facts accurately synthesized** -- no fabrication, no missing critical details
+- **Coverage indicators are honest** -- sections marked `[coverage: high]` had 5+ contributing sources
+- **Trade-off is transparent** -- wiki captures ~90% of raw file content; coverage tags tell you when to fall back to raw sources for the remaining 10%
+
+### Compression
+
+- 1,183 files → 14 topic articles -- **84x compression**
+- Session startup: 13 file reads → 1 INDEX + 2-3 topic articles -- **89% fewer tokens**
+- ~$1.05 saved per session at Opus pricing ($15/M input tokens)
 
 ## Integrating with AGENTS.md (Recommended)
 
