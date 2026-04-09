@@ -26,6 +26,7 @@ project_root="$(dirname "$config_file")"
 output_path=$(node -e "const c=require('$config_file'); console.log(c.output || '')")
 mode=$(node -e "const c=require('$config_file'); console.log(c.mode || 'staging')")
 name=$(node -e "const c=require('$config_file'); console.log(c.name || 'Project')")
+wiki_mode=$(node -e "const c=require('$config_file'); console.log(c.mode === 'codebase' ? 'codebase' : 'knowledge')" 2>/dev/null || echo "knowledge")
 
 if [ -z "$output_path" ]; then
   exit 0
@@ -62,7 +63,24 @@ else
         # Create a reference file with the last_compiled date
         ref_file=$(mktemp)
         touch -t "$(echo "$last_compiled" | sed 's/-//g')0000" "$ref_file" 2>/dev/null
-        count=$(find "$project_root/$src_path" -name "*.md" -newer "$ref_file" 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$wiki_mode" = "codebase" ]; then
+          # Codebase mode: watch knowledge files + key source files, not just .md
+          count=$(find "$project_root/$src_path" \
+            \( -name "README.md" -o -name "CLAUDE.md" -o -name "AGENTS.md" -o -name "ARCHITECTURE.md" \
+               -o -name "CONTRIBUTING.md" -o -name "CHANGELOG.md" \
+               -o -name "*.proto" -o -name "*.graphql" \
+               -o -name "openapi.yaml" -o -name "openapi.json" \
+               -o -name "ADR-*.md" \
+               -o -name "docker-compose.yml" -o -name "Dockerfile" \
+               -o -name ".env.example" \
+               -o -name "package.json" -o -name "go.mod" -o -name "Cargo.toml" -o -name "pyproject.toml" \) \
+            -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" \
+            -not -path "*/vendor/*" -not -path "*/__pycache__/*" -not -path "*/.build/*" \
+            -newer "$ref_file" 2>/dev/null | wc -l | tr -d ' ')
+        else
+          # Knowledge mode: watch .md files
+          count=$(find "$project_root/$src_path" -name "*.md" -newer "$ref_file" 2>/dev/null | wc -l | tr -d ' ')
+        fi
         changed_count=$((changed_count + count))
         rm -f "$ref_file"
       fi

@@ -1,6 +1,6 @@
 # LLM Wiki Compiler
 
-A Claude Code plugin that compiles scattered markdown knowledge files into a topic-based wiki. Reduce context costs by ~90% and get instant answers from synthesized knowledge.
+A Claude Code plugin that compiles knowledge into a topic-based wiki — from scattered markdown files **or entire codebases**. Reduce context costs by ~90% and give your agent a synthesized understanding of any project.
 
 **[Documentation](https://saydo-5cd0e3d7.mintlify.app/)**
 
@@ -98,7 +98,113 @@ claude --plugin-dir /path/to/llm-wiki-compiler/plugin
 
 After step 4, Claude naturally reads wiki articles as part of its normal session flow — no special commands needed.
 
-## How It Works
+## Codebase Mode (New in v2.0)
+
+Generate a wiki from a code repository — not just markdown files, but the full knowledge embedded in your codebase: architecture, API contracts, decision records, deployment configs, and gotchas.
+
+### Quick Start
+
+```bash
+# One command to set up and compile
+/wiki-init --codebase
+```
+
+The compiler auto-detects your project type, discovers modules/services, finds knowledge files (READMEs, ADRs, API specs, Docker configs), and compiles everything into topic articles.
+
+### What It Scans
+
+| File Type | Examples | What It Captures |
+|-----------|----------|-----------------|
+| Documentation | `README.md`, `CLAUDE.md`, `ARCHITECTURE.md` | Purpose, architecture, conventions |
+| API contracts | `*.proto`, `*.graphql`, `openapi.yaml` | API surface, inter-service communication |
+| Decision records | `ADR-*.md`, `docs/adr/*.md` | Key decisions and rationale |
+| Infrastructure | `docker-compose.yml`, `Dockerfile`, `k8s/*.yaml` | Deployment topology, scaling |
+| Operations | `docs/runbooks/*.md`, `CHANGELOG.md` | Gotchas, failure modes, version history |
+| Config shape | `.env.example`, `package.json` | Environment requirements, dependencies |
+
+With `deep_scan: true`, it also reads entry points, type definitions, and route files for richer articles.
+
+### Example Output
+
+```markdown
+# auth-service
+
+## Purpose [coverage: high -- 8 sources]
+Handles user authentication and session management via JWT tokens.
+All other services call auth-service to validate requests.
+
+## Talks To [coverage: high -- 6 sources]
+- **user-service** (REST: /api/users/:id) -- subscription status lookup
+- **notification-service** (SQS: auth.password-reset) -- triggers email
+- **billing-service** (gRPC) -- validates payment status before premium access
+
+## Key Decisions [coverage: medium -- 3 sources]
+- **JWT over sessions** -- stateless scaling, no shared session store (ADR-003)
+- **Refresh token rotation** -- security requirement from compliance audit
+
+## Gotchas [coverage: high -- 5 sources]
+- Token expiry is 15 minutes, not 1 hour (changed in v2.3)
+- Rate limiting on /auth/login is per-IP, not per-user
+```
+
+### How It Differs from Google Code Wiki / DeepWiki
+
+Those tools answer "what does this code do?" by parsing functions and generating API docs.
+
+This tool answers **"what does this project *know*?"** by synthesizing documentation, decision records, deployment configs, and operational knowledge into articles an agent can navigate.
+
+| | Google Code Wiki / DeepWiki | LLM Wiki Compiler |
+|---|---|---|
+| Input | Source code (AST parsing) | Knowledge files + optional code |
+| Output | API docs + architecture diagrams | Synthesized topic articles with coverage indicators |
+| Infrastructure | Hosted platform / server + embeddings | Zero infra — Claude Code plugin |
+| Updates | Full regen on every commit | Incremental — only changed topics |
+| Consumer | Developers reading docs | Your AI agent (and you) |
+
+### Monorepo / Microservice Support
+
+For monorepos, the compiler detects service boundaries by looking for directories with their own manifest files (`package.json`, `go.mod`, etc.). Each service becomes a topic article. Cross-cutting concerns (infrastructure, testing, deployment) get their own articles.
+
+```
+📚 Wiki compiled — 8 topics from 47 files
+
+  Topics created:
+  ├── auth-service (12 sources)
+  ├── billing-service (9 sources)
+  ├── notification-service (6 sources)
+  ├── api-gateway (5 sources)
+  ├── infrastructure (4 sources)
+  ├── testing (3 sources)
+  └── deployment (3 sources)
+
+  Concepts discovered:
+  ├── error-handling-strategy — shared pattern across 4 services
+  └── auth-flow — touches auth, gateway, billing
+```
+
+### Codebase Configuration
+
+```json
+{
+  "version": 2,
+  "mode": "codebase",
+  "name": "My Project",
+  "sources": [{ "path": "./", "exclude": ["node_modules/", "dist/", ".git/", "wiki/"] }],
+  "output": "wiki/",
+  "service_discovery": "auto",
+  "deep_scan": false,
+  "knowledge_files": ["README.md", "CLAUDE.md", "*.proto", "openapi.*", "ADR-*.md", "Dockerfile"]
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `mode` | `"codebase"` enables code-aware topic discovery |
+| `service_discovery` | `"auto"` detects monorepo vs single project |
+| `deep_scan` | `true` to also read source code files for richer articles |
+| `knowledge_files` | Glob patterns for priority documentation files |
+
+## How It Works (Knowledge Mode)
 
 ### Commands
 
@@ -208,14 +314,14 @@ When `/wiki-query` produces a useful synthesis that connects information across 
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "name": "My Project",
+  "mode": "staging",
   "sources": [
     { "path": "Knowledge/", "exclude": ["wiki/"] },
     { "path": "docs/meetings/" }
   ],
   "output": "Knowledge/wiki/",
-  "mode": "staging",
   "topic_hints": ["retention", "onboarding"],
   "link_style": "obsidian"
 }
@@ -223,13 +329,17 @@ When `/wiki-query` produces a useful synthesis that connects information across 
 
 | Field | Description |
 |-------|-------------|
+| `version` | Config version (`2` for latest) |
 | `name` | Display name for the knowledge base |
-| `sources` | Directories to scan for .md files |
+| `mode` | Integration mode: `staging` / `recommended` / `primary` — OR `codebase` for code repositories |
+| `sources` | Directories to scan |
 | `output` | Where compiled wiki lives |
-| `mode` | `staging` / `recommended` / `primary` |
 | `article_sections` | Article structure — generated during `/wiki-init` based on your content (see below) |
 | `topic_hints` | Optional seed topics to guide classification |
 | `link_style` | `obsidian` (wikilinks) or `markdown` (standard links) |
+| `service_discovery` | (codebase mode) `auto` or `manual` — how to detect modules/services |
+| `knowledge_files` | (codebase mode) Glob patterns for priority documentation files |
+| `deep_scan` | (codebase mode) `true` to also read source code files |
 
 ### Custom Article Structure
 

@@ -1,24 +1,33 @@
 ---
 name: wiki-compiler
-description: Core compilation algorithm for the LLM Wiki Compiler. Reads markdown source files from configured directories and compiles them into topic-based wiki articles. Called by /wiki-compile command.
+description: Core compilation algorithm for the LLM Wiki Compiler. Reads source files from configured directories and compiles them into topic-based wiki articles. Supports both knowledge mode (markdown files) and codebase mode (code repositories). Called by /wiki-compile command.
 ---
 
 # Wiki Compiler — Compilation Algorithm
 
-This skill contains the 5-phase algorithm for compiling markdown source files into a topic-based wiki.
+This skill contains the 5-phase algorithm for compiling source files into a topic-based wiki.
 
 **Safety rule:** NEVER modify any file outside the configured output directory. Source files are read-only.
 
 ## Prerequisites
 
 Before running, read `.wiki-compiler.json` from the project root to get:
+- `mode` — "knowledge" (default, markdown files) or "codebase" (code repository)
 - `sources[]` — directories to scan (with optional `exclude` patterns)
 - `output` — where to write wiki articles
 - `name` — project/domain name for the wiki
 - `topic_hints[]` — optional seed topics from the user
 - `link_style` — "obsidian" (default) or "markdown"
 
+**Codebase mode additional config:**
+- `service_discovery` — "auto" (detect monorepo vs single project) or "manual"
+- `knowledge_files[]` — glob patterns for priority documentation files (README.md, CLAUDE.md, etc.)
+- `deep_scan` — `false` (default) or `true` (also read key source files for richer articles)
+- `code_extensions[]` — file extensions to consider as source code (e.g., `.ts`, `.py`, `.go`)
+
 ## Phase 1: Scan Sources
+
+### Knowledge mode (default)
 
 1. For each entry in `sources[]`, list all `.md` files using Glob
 2. Exclude any paths matching `exclude` patterns (e.g., the `wiki/` output directory itself)
@@ -26,7 +35,26 @@ Before running, read `.wiki-compiler.json` from the project root to get:
 4. Compare file list against previous state to identify new or changed files
 5. On first run (no prior state), treat ALL files as new
 
+### Codebase mode
+
+1. For each entry in `sources[]`, scan for **knowledge files** matching `knowledge_files[]` patterns:
+   - Documentation: `README.md`, `CLAUDE.md`, `AGENTS.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`
+   - API contracts: `*.proto`, `*.graphql`, `openapi.yaml`, `openapi.json`
+   - Decision records: `ADR-*.md`, `docs/adr/*.md`
+   - Infrastructure: `docker-compose.yml`, `Dockerfile`, `k8s/*.yaml`
+   - Operations: `docs/runbooks/*.md`, `CHANGELOG.md`, `.env.example`
+2. If `deep_scan` is `true`, also scan for key source files per topic area:
+   - Entry points: `index.ts`, `main.py`, `main.go`, `lib.rs`, `App.swift`, etc.
+   - Type definitions: `types.ts`, `models.py`, `schema.prisma`, `*.proto`
+   - Config files: `package.json`, `tsconfig.json`, `pyproject.toml`, `go.mod`, `Cargo.toml`
+   - Limit to ~20 source files per topic area to control token cost
+3. Exclude: `node_modules/`, `dist/`, `.git/`, `vendor/`, `__pycache__/`, `.build/`, `target/`, and configured `exclude` patterns
+4. Read `.compile-state.json` and compare to identify new or changed files
+5. On first run, treat ALL discovered files as new
+
 ## Phase 2: Classify and Discover Topics
+
+### Knowledge mode (default)
 
 1. For each source file, read its:
    - File path (directory structure is a strong signal)
@@ -44,6 +72,58 @@ Before running, read `.wiki-compiler.json` from the project root to get:
 - Use headings and key terms in content as secondary signals
 - Meeting notes and session histories often belong to multiple topics
 - Team memory files (gotchas, decisions, dead-ends) contain entries for many topics — classify by scanning content
+
+### Codebase mode
+
+Topic discovery uses a 3-pass approach: structure → knowledge → optional deep scan.
+
+**Pass 1 — Structure scan (automatic topic discovery):**
+
+1. Detect project type by looking for manifest files in the root:
+   - `package.json` → Node.js/JavaScript/TypeScript
+   - `go.mod` → Go
+   - `Cargo.toml` → Rust
+   - `pyproject.toml` / `requirements.txt` / `setup.py` → Python
+   - `Gemfile` → Ruby
+   - `*.sln` / `*.csproj` → .NET
+   - `Package.swift` → Swift
+   - `pom.xml` / `build.gradle` → Java/Kotlin
+
+2. Detect monorepo vs single project:
+   - **Monorepo/microservices:** Multiple directories each containing their own manifest file (e.g., `services/auth/package.json`, `services/billing/package.json`). Each service directory = a topic.
+   - **Single project:** One manifest at root. Use top-level directory structure as topic boundaries (e.g., `src/auth/`, `src/api/`, `src/models/` each become topics).
+
+3. Auto-create cross-cutting topics when relevant files exist:
+   - `infrastructure` — if `docker-compose.yml`, `Dockerfile`, `k8s/`, `.github/workflows/` exist
+   - `testing` — if `tests/`, `__tests__/`, `spec/`, `test/` directories exist
+   - `deployment` — if CI/CD configs, Dockerfile, deployment scripts exist
+
+**Pass 2 — Knowledge file scan (primary sources):**
+
+For each topic area discovered in Pass 1:
+1. Find all knowledge files (from `knowledge_files[]` config) within that topic's directory
+2. Read each knowledge file's content — these are the primary sources for compilation
+3. A knowledge file CAN belong to multiple topics (e.g., root `README.md` touches all topics)
+4. Root-level knowledge files (`./README.md`, `./CLAUDE.md`, `./ARCHITECTURE.md`) contribute to ALL topics or get their own `project-overview` topic
+
+**Pass 3 — Deep scan (optional, when `deep_scan: true`):**
+
+For each topic area, also read key source files to enrich understanding:
+1. **Entry points:** `index.ts`, `main.py`, `main.go`, `lib.rs`, `App.swift`, `app.py`
+2. **Type definitions:** `types.ts`, `models.py`, `schema.prisma`, `*.proto`, `types.go`
+3. **Route/API definitions:** `routes.ts`, `api.py`, `handlers.go`, `controller.ts`
+4. **Config:** `package.json` (dependencies), `tsconfig.json`, language-specific config
+5. Limit to ~20 files per topic to control token cost
+6. These supplement knowledge files — they add implementation detail to the article's Architecture, API Surface, and Data sections
+
+**Classification output** is identical to knowledge mode: topic slug → list of source files. The rest of the pipeline (Phases 3-5) runs unchanged.
+
+**Topic slug conventions for codebases:**
+- Service names: `auth-service`, `billing-service`, `notification-service`
+- Module names: `auth`, `api-routes`, `data-layer`, `ui-components`
+- Cross-cutting: `infrastructure`, `testing`, `deployment`, `shared-utils`
+
+**Article template:** When `mode` is `codebase`, use `${CLAUDE_PLUGIN_ROOT}/templates/codebase-article-template.md` as the fallback template (instead of the default knowledge template). If `article_sections` is set in config, use those sections (same as knowledge mode).
 
 ## Phase 3: Compile Topic Articles
 
@@ -193,6 +273,39 @@ Always regenerate INDEX.md, even if no topics changed (it's cheap).
   "total_sources_scanned": {count}
 }
 ```
+
+## Phase 6: Generate CONTEXT.md (codebase mode only, first run)
+
+On the **first compile** (no prior `.compile-state.json`), generate `{output}/CONTEXT.md`:
+
+```markdown
+# Codebase Wiki — Navigation Guide
+
+This project has a compiled knowledge wiki. Use it instead of scanning raw files.
+
+## How to use this wiki
+
+1. Start at INDEX.md — scan the topic table to find relevant modules
+2. Read 1-3 topic articles relevant to your current task
+3. Check coverage tags:
+   - [coverage: high] — trust this section, skip raw files
+   - [coverage: medium] — good overview, check raw sources for implementation details
+   - [coverage: low] — read the raw source files listed in Sources
+4. Check concepts/ for cross-cutting patterns (auth strategy, error handling, etc.)
+5. Only read raw source files when you need code-level detail
+
+## When NOT to use the wiki
+- Writing new code (read the actual source files for exact syntax/types)
+- Debugging a specific function (go to the file directly)
+- The wiki article says [coverage: low] for what you need
+
+## Stats
+Compiled: {date} | Topics: {N} | Sources: {M} | Auto-updates on session start
+```
+
+On subsequent compiles, update the Stats line in CONTEXT.md.
+
+After generating CONTEXT.md, **ask the user** (don't auto-modify): "Want me to add a reference to `wiki/CONTEXT.md` in your CLAUDE.md? This helps the agent discover the wiki automatically."
 
 ## Output
 

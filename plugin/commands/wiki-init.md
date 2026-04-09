@@ -2,9 +2,140 @@
 
 Interactive, conversational setup for a new knowledge base wiki. One question at a time, multiple choice when possible.
 
+**Arguments:**
+- (none) — standard interactive init for markdown knowledge bases
+- `--codebase` — streamlined init for code repositories (fast-path, ~1 question)
+
 ## Instructions
 
 **Important:** Ask ONE question per message. Wait for the user's response before moving to the next question. Never batch multiple questions. Keep the tone conversational — like a knowledgeable colleague setting things up for you.
+
+---
+
+## Codebase Mode (`--codebase`)
+
+When the user runs `/wiki-init --codebase`, use this streamlined flow instead of the standard 10-step process.
+
+### Codebase Step 1: Check for existing config
+
+Same as standard Step 1 — check for `.wiki-compiler.json` and ask to reconfigure or abort.
+
+### Codebase Step 2: Auto-detect everything
+
+Scan the project root and build a complete picture in one pass:
+
+1. **Detect project type** by looking for manifest files:
+   - `package.json` → Node.js/TypeScript
+   - `go.mod` → Go
+   - `Cargo.toml` → Rust
+   - `pyproject.toml` / `requirements.txt` → Python
+   - `Gemfile` → Ruby
+   - `*.sln` → .NET
+   - `Package.swift` → Swift
+   - `pom.xml` / `build.gradle` → Java/Kotlin
+   - Multiple manifests in subdirectories → Monorepo
+
+2. **Discover topic candidates:**
+   - Monorepo: each directory with its own manifest = a topic
+   - Single project: major subdirectories under `src/`, `lib/`, `app/`, or root = topics
+   - Cross-cutting topics: `infrastructure` (if Docker/CI exists), `testing` (if test dirs exist), `deployment` (if k8s/deploy scripts exist)
+
+3. **Count knowledge files** matching default patterns:
+   - `README.md`, `CLAUDE.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`
+   - `*.proto`, `*.graphql`, `openapi.*`
+   - `ADR-*.md`, `docs/adr/*.md`
+   - `docker-compose.yml`, `Dockerfile`
+   - `CHANGELOG.md`, `.env.example`
+
+4. **Auto-detect project name** from `package.json` `name` field, `go.mod` module name, directory name, or git remote.
+
+### Codebase Step 3: One confirmation prompt
+
+Present everything in a single confirmation:
+
+```
+📚 I see a {project_type} project with {N} modules and {M} knowledge files.
+
+  Topics: {topic1}, {topic2}, {topic3}, ...
+  Sections: Purpose, Architecture, Talks To, API Surface, Data, Key Decisions, Gotchas
+  Output: wiki/
+
+A) Looks good — create config and compile now (recommended)
+B) Customize — let me adjust topics, sections, or settings
+C) Not now
+```
+
+If A: create config (Codebase Step 4) and immediately run `/wiki-compile`.
+If B: fall through to the standard interactive flow (Step 2 onwards) but with codebase defaults pre-filled.
+If C: exit.
+
+### Codebase Step 4: Create configuration
+
+Write `.wiki-compiler.json`:
+
+```json
+{
+  "version": 2,
+  "mode": "codebase",
+  "name": "{auto_detected_name}",
+  "sources": [
+    { "path": "./", "exclude": ["node_modules/", "dist/", ".git/", "wiki/", "vendor/", "__pycache__/", ".build/", "target/", ".next/", "coverage/"] }
+  ],
+  "output": "wiki/",
+  "service_discovery": "auto",
+  "knowledge_files": [
+    "README.md", "CLAUDE.md", "AGENTS.md", "ARCHITECTURE.md", "CONTRIBUTING.md",
+    "*.proto", "*.graphql", "openapi.yaml", "openapi.json",
+    "ADR-*.md", "docs/adr/*.md",
+    "docker-compose.yml", "Dockerfile",
+    ".env.example", "CHANGELOG.md"
+  ],
+  "deep_scan": false,
+  "auto_update": "prompt",
+  "article_sections": [
+    { "name": "Purpose", "description": "What this module/service does and who depends on it", "required": true },
+    { "name": "Architecture", "description": "Key files, structure, entry points" },
+    { "name": "Talks To", "description": "Dependencies, communication patterns, inter-service calls" },
+    { "name": "API Surface", "description": "Endpoints, exported functions, or interfaces exposed" },
+    { "name": "Data", "description": "Tables, collections, queues, caches, state owned" },
+    { "name": "Key Decisions", "description": "Why it was built this way, from ADRs and READMEs" },
+    { "name": "Gotchas", "description": "Known issues, edge cases, failure modes" },
+    { "name": "Sources", "description": "Backlinks to all contributing files", "required": true }
+  ],
+  "link_style": "markdown"
+}
+```
+
+### Codebase Step 5: Create output directory and compile
+
+1. Create `wiki/`, `wiki/topics/`, `wiki/concepts/` directories
+2. Create empty `wiki/.compile-state.json`
+3. Create empty `wiki/log.md`
+4. Run the wiki-compiler skill (all 6 phases including CONTEXT.md generation)
+5. Show the first-compile summary with topic tree
+
+### Codebase Step 6: Done
+
+```
+📚 Wiki compiled — {N} topics from {M} files
+
+  Topics created:
+  ├── {topic1} ({count} sources) — {one-line description}
+  ├── {topic2} ({count} sources) — {one-line description}
+  └── {topic3} ({count} sources) — {one-line description}
+
+  Concepts discovered:
+  └── {concept1} — {description}
+
+  Browse: wiki/INDEX.md
+  Navigation guide: wiki/CONTEXT.md
+
+Want me to add a reference to wiki/CONTEXT.md in your CLAUDE.md?
+```
+
+---
+
+## Standard Mode (no flags)
 
 ### Step 1: Check for existing config
 
